@@ -1,9 +1,15 @@
+#ifndef NETWORK_H
+#define NETWORK_H
 
-#ifndef HELLO_OPERATIONS_H
-#define HELLO_OPERATIONS_H
+#define REGISTER_BYTE   'R'
+#define UNREGISTER_BYTE 'U'
+#define CONNECT_BYTE    'C'
+#define LISTEN_BYTE     'L'
 
-char *get_char_pointer_from_malloc(int);
+int extract_status_code(char *plaintext);
 
-void free_char_pointer(char **);
+void received_bytes_increase_and_report(const size_t *rxb, size_t *t_rxb, const char *tag, int flag);
 
-#endif //HELLO_OPERATIONS_H
+void transmitted_bytes_increase_and_report(const size_t *txb, size_t *t_txb, const char *tag, int flag);
+
+#endif //NETWORK_H

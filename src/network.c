@@ -1,17 +1,34 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
 #include "network.h"
+#include "logging.h"
 
-char *get_char_pointer_from_malloc(int value){
-	char *buffer;
-	buffer = malloc(128 * sizeof(char));
-	snprintf(buffer, 128, "Library value is %d", value);
-	printf("MESSAGE --> %s\n", buffer);
-    printf("ADDRESS --> %p\n", (void *) &buffer);
-	return buffer;
+
+
+int extract_status_code(char *plaintext) {
+	int status_code = -1;
+	char buffer[3];
+	memset(&buffer, 0, sizeof(buffer));
+	strncpy(buffer, plaintext, 3);
+	status_code = (int) strtol(buffer, NULL, 10);
+	return status_code;
 }
 
-void free_char_pointer(char **pointer){
-	free(*pointer);
-	*pointer = NULL;
+void received_bytes_increase_and_report(const size_t *rxb, size_t *t_rxb, const char *tag, int flag) {
+	*t_rxb += *rxb;
+	if (flag == 0) {
+		log_info("[%s] Received bytes: %zu", tag, *rxb);
+		log_info("[%s] Total received bytes: %zu", tag, *t_rxb);
+	}
 }
+
+void transmitted_bytes_increase_and_report(const size_t *txb, size_t *t_txb, const char *tag, int flag) {
+	*t_txb += *txb;
+	if (flag == 0) {
+		log_info("[%s] Transmitted bytes: %zu", tag, *txb);
+		log_info("[%s] Total transmitted bytes: %zu", tag, *t_txb);
+	}
+}
+

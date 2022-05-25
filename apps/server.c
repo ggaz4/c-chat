@@ -1,7 +1,10 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+
 #include <errno.h>
 
 #include <sys/socket.h>
@@ -13,102 +16,32 @@
 #include <fcntl.h>
 
 // our libraries
-#include "network.h"
 #include "logging.h"
+#include "network.h"
+#include "structures.h"
 
+
+
+int LOG_LEVEL = DEBUG_LEVEL; // must do this before any log_*() call
+
+RegisteredUser *users_list_head = NULL;
 
 
 #define SERVER_IP       "127.0.0.1"
 #define SERVER_PORT     29000
 #define BUFLEN          2048
-#define REGISTER_BYTE   'R'
-#define CONNECT_BYTE    'C'
-#define LISTEN_BYTE     'L'
 
-//volatile sig_atomic_t sigint_received = 0;
+
 volatile sig_atomic_t sigint_received = 0;
+
+void prepare_status_code(char *buffer, int code, const char *message) {
+	memset(buffer, 0, BUFLEN);
+	sprintf(buffer, "%d%s", code, message);
+}
 
 void sigint_handler(int s) {
 	log_info("[server] SIGINT handler called");
 	sigint_received = 1;
-}
-
-typedef struct RegisteredUser {
-	u_int32_t id;
-	char *username;
-	char *ip_addr;
-	int port;
-	char operation;
-	struct RegisteredUser *next;
-} RegisteredUser;
-RegisteredUser *users_list_head = NULL;
-
-uint32_t uint32_random(void) {
-	static uint32_t Z;
-	if (Z & 1) {
-		Z = (Z >> 1);
-	} else {
-		Z = (Z >> 1) ^ 0x7FFFF159;
-	}
-	return Z;
-}
-
-RegisteredUser *create_registered_user() {
-	RegisteredUser *temp = (RegisteredUser *) malloc(sizeof(struct RegisteredUser));
-	temp->id = -1;
-	temp->username = NULL;
-	temp->ip_addr = NULL;
-	temp->port = -1;
-	temp->operation = '-';
-	temp->next = NULL;
-	return temp;
-}
-
-RegisteredUser *add_registered_user(RegisteredUser **head, char *username) {
-	RegisteredUser *temp;
-	RegisteredUser *p;
-
-	temp = create_registered_user();
-	temp->id = uint32_random();
-	temp->username = username;
-	if (*head == NULL) {
-		*head = temp;
-	} else {
-		p = *head;
-		while (p->next != NULL) {
-			p = p->next;
-		}
-		p->next = temp;
-	}
-	return temp;
-}
-
-RegisteredUser *search_registered_user(RegisteredUser *head, const char *username) {
-	RegisteredUser *p = head;
-	if (p == NULL) {
-		return NULL;
-	}
-
-	while (p->next != NULL) {
-		if (p->username == username) {
-			return p;
-		}
-		p = p->next;
-	}
-	return NULL;
-}
-
-void free_registered_users_list(RegisteredUser *head) {
-	RegisteredUser *p = head;
-	while (p) {
-		struct RegisteredUser *tmp = p;
-		p = p->next;
-		free(tmp);
-	}
-}
-
-void print_registered_user(RegisteredUser *user) {
-	log_info("id: %du\nusername: %s\noperation: %c\nIP: %s\nport: %d", user->id, user->username, user->operation, user->ip_addr, user->port);
 }
 
 void usage(void) {
@@ -119,22 +52,6 @@ void usage(void) {
 	                      "\t-h     \t\tThis help message\n";
 	log_usage(message, options);
 	exit(EXIT_SUCCESS);
-}
-
-void print_cli_variables() {
-
-}
-
-void received_bytes_increase_and_report(const size_t *rxb, size_t *t_rxb) {
-	*t_rxb += *rxb;
-	log_info("[server] received bytes from client: %zu", *rxb);
-	log_info("[server] Total received bytes from client so far: %zu", *t_rxb);
-}
-
-void transmitted_bytes_increase_and_report(const size_t *txb, size_t *t_txb) {
-	*t_txb += *txb;
-	log_info("[server] Transmitted bytes to client: %zu", *txb);
-	log_info("[server] Total transmitted bytes to client so far: %zu", *t_txb);
 }
 
 int main(int argc, char const *argv[]) {
@@ -148,7 +65,7 @@ int main(int argc, char const *argv[]) {
 	struct sockaddr_in server_addr;     /* server socket address    */
 	int server_addr_len;                /* server address length    */
 	struct sockaddr_in client_addr;     /* client socket address    */
-	int client_addr_len;                /* client address length    */
+	socklen_t client_addr_len;                /* client address length    */
 	size_t rxb = 0;                     /* received bytes	        */
 	size_t t_rxb = 0;                   /* total received bytes     */
 	size_t txb = 0;                     /* transmitted bytes	    */
@@ -170,11 +87,14 @@ int main(int argc, char const *argv[]) {
 
 
 	/* initialize */
-	memset(&server_addr, 0, sizeof(struct sockaddr_in));
-	memset(&client_addr, 0, sizeof(struct sockaddr_in));
+
+
+
+
+
 
 	/* get cmd options */
-	while ((opt = getopt(argc, (char *const *) argv, "p:**ah")) != -1) {
+	while ((opt = getopt(argc, (char *const *) argv, "p::a::h::")) != -1) {
 		switch (opt) {
 			case 'p':
 				server_port = (int) strtol(optarg, &tmp, 10);
@@ -194,13 +114,14 @@ int main(int argc, char const *argv[]) {
 
 	// socket init
 	if ((server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
-		log_with_errno("Socket call failed");
+		log_with_errno("[server] socket call failed");
 		exit(EXIT_FAILURE);
 	}
 
 	//make socket non blocking to handle SIGINT
 	fcntl(server_fd, F_SETFL, O_NONBLOCK);
 
+	memset(&server_addr, 0, sizeof(struct sockaddr_in));
 	server_addr.sin_port = htons(server_port);
 	server_addr.sin_family = AF_INET;
 	server_addr.sin_addr.s_addr = htonl(server_in_addr);
@@ -212,6 +133,8 @@ int main(int argc, char const *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
+
+
 	//bind the socket
 	if (bind(server_fd, (struct sockaddr *) &server_addr, sizeof(server_addr)) == -1) {
 		close(server_fd);
@@ -219,140 +142,262 @@ int main(int argc, char const *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-
-
 	//listen for connections on socket
-	if (listen(server_fd, 2)) {
+	if (listen(server_fd, 5)) {
 		close(server_fd);
 		log_with_errno("[server] Socket listen failed");
 		exit(EXIT_FAILURE);
 	}
-	log_info("[server] Awaiting for client connections on IP: %s", inet_ntoa(server_addr.sin_addr));
+
+	log_info("[server] Awaiting for client connections on '%s:%d'", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
 
 	signal(SIGINT, sigint_handler);
-	signal(SIGTERM, sigint_handler);
-	signal(SIGKILL, sigint_handler);
 
 	while (!sigint_received) {
-		if ((connection_fd = accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len)) == -1) {
-			if (errno == EAGAIN | errno == EWOULDBLOCK) {
-				//log_info("[server] EWOULDBLOCK was raised");
-				continue;
-			}
-			close(server_fd);
+		//SOCK_NONBLOCK --> flag for accept4()
+
+		memset(&client_addr, 0, sizeof(struct sockaddr_in));
+		if ((connection_fd = accept4(server_fd, (struct sockaddr *) &client_addr, &client_addr_len, 0)) == -1) {
+			//make socket non-blocking to handle SIGINT only for accept()
+			if (errno == EAGAIN | errno == EWOULDBLOCK) {continue;}
 			log_with_errno("[server] Socket accept failed");
 			continue;
 		}
-		log_info("[server] client connected with ip address: %s and port: %d", inet_ntoa(client_addr.sin_addr), client_addr.sin_port);
+
+		// disable nonblock flag so, it won't crash the program later
+		fcntl(server_fd, F_SETFL, ~O_NONBLOCK);
+
+
+		log_info("[server] client connected from '%s:%d'", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
 		/* STAGE1: Receive the initial message (REGISTER USER) */
-		log_info("[server] Waiting for client to send init message");
+		log_debug("[server] Waiting for client to send init message");
 		if ((rxb = (size_t) recv(connection_fd, &plaintext, sizeof(plaintext), 0)) == -1) {
 			close(connection_fd);
-			log_with_errno("[server] Socket error receiving initial message");
+			log_with_errno("[server] socket error receiving initial message");
+			continue;
 		}
 		if (rxb == 0) {
-			log_info("[server] connection terminated before sending init message");
+			log_error("[server] connection terminated before receiving init message");
 			close(connection_fd);
 			continue;
 		}
-		received_bytes_increase_and_report(&rxb, &t_rxb);
+		received_bytes_increase_and_report(&rxb, &t_rxb, "server", 1);
 
 		log_info("[server] Initial message from client: '%s'", plaintext);
 
-		if (plaintext[0] != REGISTER_BYTE) {
-			log_info("[server] Wrong initial byte %c --> should be %c", plaintext[0], REGISTER_BYTE);
-			log_info("[server] Closing connection");
+		if (plaintext[0] != REGISTER_BYTE && plaintext[0] != UNREGISTER_BYTE) {
+			log_error("[server] wrong initial byte %c --> should be one of [%c, %c]", plaintext[0], REGISTER_BYTE, UNREGISTER_BYTE);
+			log_error("[server] closing connection");
 			close(connection_fd);
 			break;
 		}
 
 		char username[rxb];
+		memset(username, 0, rxb);
 		strncpy(username, plaintext + 1, rxb - 1);
-		log_info("[server] Username sent from client: %s", username);
+		log_debug("[server] username sent from client: %s", username);
 
 		// check if username exists, otherwise add it to the list
 		RegisteredUser *user = search_registered_user(users_list_head, username);
-		if (user != NULL) {
-			log_info("[server] User '%s' already registered", user->username);
-			log_info("[server] Closing connection");
-			close(connection_fd);
-		}
-		user = add_registered_user(&users_list_head, username);
 
-		log_info("[server] Successfully added user %s to the list", username);
-		print_registered_user(user);
+		// unregister mode
+		if (plaintext[0] == UNREGISTER_BYTE) {
+			if (user == NULL) {
+				log_info("[server] user '%s' is not registered to the server", username);
+				// send response back to client that user was not found
+				prepare_status_code((char *) &plaintext, 404, "NOTFOUND");
+			} else {
+				// send reply to client with status_code: 200 OK
+				delete_registered_user(&users_list_head, username);
+				log_debug("[server] successfully deleted user '%s' from the list", username);
+				prepare_status_code((char *) &plaintext, 200, "OK");
+			}
 
-		// send reply to client with status_code: 200 OK
-		memset(&plaintext, 0, sizeof(plaintext));
-		strcpy(plaintext, "200OK");
-		log_info("[server] sending response to client: %s", plaintext);
-		if ((txb = send(connection_fd, &plaintext, strlen((const char *) &plaintext) + 1, 0)) == -1) {
-			close(server_fd);
-			close(connection_fd);
-			log_with_errno("[server] sending message to client failed.");
-		}
-		transmitted_bytes_increase_and_report(&txb, &t_txb);
-
-
-		// STAGE2: get operation from client
-		log_info("[server] Waiting for client to send operation message");
-		if ((rxb = (size_t) recv(connection_fd, &plaintext, sizeof(plaintext), 0)) == -1) {
-			close(connection_fd);
-			log_with_errno("[server] Socket error receiving operation message");
-		}
-		if (rxb == 0) {
-			log_info("[server] connection terminated before sending operation message");
+			log_debug("[server] sending response to client: %s", plaintext);
+			if ((txb = send(connection_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+				close(connection_fd);
+				close(server_fd);
+				log_with_errno("[server] sending message to client failed.");
+				exit(EXIT_FAILURE);
+			}
+			transmitted_bytes_increase_and_report(&txb, &t_txb, "server", 1);
+			log_info("[server] closing connection");
 			close(connection_fd);
 			continue;
 		}
-		received_bytes_increase_and_report(&rxb, &t_rxb);
 
-		log_info("[server] Operation message from client: '%s'", plaintext);
 
+		// register mode
+		if (user != NULL) {
+			log_info("[server] user '%s' already registered", user->username);
+
+			// send response back to client that user already exists
+			prepare_status_code((char *) &plaintext, 409, "CONFLICT");
+			log_debug("[server] sending response to client: %s", plaintext);
+			if ((txb = send(connection_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+				close(connection_fd);
+				close(server_fd);
+				log_with_errno("[server] sending message to client failed.");
+				exit(EXIT_FAILURE);
+			}
+			transmitted_bytes_increase_and_report(&txb, &t_txb, "server", 1);
+
+			log_info("[server] closing connection");
+			close(connection_fd);
+			continue;
+		}
+
+		user = add_registered_user(&users_list_head, username);
+
+		log_debug("[server] successfully added user '%s' to the list", username);
+
+		// send reply to client with status_code: 200 OK
+		prepare_status_code((char *) &plaintext, 200, "OK");
+		log_debug("[server] sending response to client: %s", plaintext);
+		if ((txb = send(connection_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+			close(connection_fd);
+			close(server_fd);
+			log_with_errno("[server] sending message to client failed.");
+			exit(EXIT_FAILURE);
+		}
+		transmitted_bytes_increase_and_report(&txb, &t_txb, "server", 1);
+
+
+		// STAGE2: get operation from client
+		memset(plaintext, 0, sizeof(plaintext));
+		log_debug("[server] waiting for client to send operation message");
+		if ((rxb = (size_t) recv(connection_fd, plaintext, sizeof(plaintext), 0)) == -1) {
+			close(server_fd);
+			close(connection_fd);
+			log_with_errno("[server] socket error receiving operation message");
+			exit(EXIT_FAILURE);
+		}
+		if (rxb == 0) {
+			log_error("[server] connection terminated before receiving operation message");
+			close(connection_fd);
+			continue;
+		}
+		received_bytes_increase_and_report(&rxb, &t_rxb, "server", 1);
+
+		log_info("[server] operation message from client: '%s'", plaintext);
+
+		char *token = NULL;
 		switch (plaintext[0]) {
 			case CONNECT_BYTE:
-				log_info("[server] Client wants to connect (chat) with someone at IP: and PORT: ");
+				i = 0;
+				char connect_with_username[256];
+
+				token = strtok(&plaintext[2], " ");
+				while (token) {
+					if (i == 0) {
+						strcpy(connect_with_username, token);
+					}
+					token = strtok(NULL, " ");
+					i++;
+				}
+
+				log_info("[server] user '%s' wants to connect (chat) with '%s'", user->username, connect_with_username);
+
+				RegisteredUser *connect_user = search_registered_user(users_list_head, connect_with_username);
+				if (connect_user == NULL) {
+					log_info("[server] user '%s' does not exist", connect_with_username);
+
+					// delete registered user because it won't connect with anyone and thus is not a valid list entry
+					delete_registered_user(&users_list_head, user->username);
+
+					// send reply that user does not exist
+					prepare_status_code((char *) &plaintext, 404, "NOTFOUND");
+					log_debug("[server] sending response to client: %s", plaintext);
+					if ((txb = send(connection_fd, &plaintext, strlen((const char *) &plaintext) + 1, 0)) == -1) {
+						close(connection_fd);
+						close(server_fd);
+						log_with_errno("[server] sending message to client failed.");
+						exit(EXIT_FAILURE);
+					}
+					transmitted_bytes_increase_and_report(&txb, &t_txb, "server", 1);
+					break;
+				}
+
+				//update current user's information
+				user->operation = CONNECT_BYTE;
+				strcpy(user->connected_with, connect_user->username);
+
+				// send reply that user exists and then send a SECOND reply with the appropriate IP and PORT of the user
+
+				//1st
+				//prepare_status_code((char *) &plaintext, 200, "OK");
+				memset(plaintext, 0, sizeof(plaintext));
+				sprintf((char *) &plaintext, "%d%s %s %d", 200, "OK", connect_user->ip_addr, connect_user->port);
+				log_debug("[server] sending response to client: %s", plaintext);
+				if ((txb = send(connection_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+					close(connection_fd);
+					close(server_fd);
+					log_with_errno("[server] sending message to client failed.");
+					exit(EXIT_FAILURE);
+				}
+				transmitted_bytes_increase_and_report(&txb, &t_txb, "server", 1);
+
+				//2nd
+//				memset(plaintext, 0, sizeof(plaintext));
+//				sprintf((char *) &plaintext, "%s %d", connect_user->ip_addr, connect_user->port);
+//				log_debug("[client] sending operation message response to client: %s", plaintext);
+//				if ((txb = send(connection_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+//					close(connection_fd);
+//					close(server_fd);
+//					log_with_errno("[client] sending message to client failed");
+//					exit(EXIT_FAILURE);
+//				}
+//				transmitted_bytes_increase_and_report(&txb, &t_txb, "server", 1);
+
+				close(connection_fd);
+
 				break;
 			case LISTEN_BYTE:
-				i = 2;
-				int j;
-				char c;
+				i = 0;
+
 				char listen_ip[INET_ADDRSTRLEN];
-				char listen_port_tmp[6];
+				int listen_port;
 
-				c = plaintext[i];
-				j = 0;
-				while ((c = plaintext[i]) != ' ') {
-					listen_ip[j] = c;
+				token = strtok(&plaintext[2], " ");
+				while (token) {
+					if (i == 0) {
+						strcpy(listen_ip, token);
+					} else if (i == 1) {
+						listen_port = (int) strtol(token, NULL, 10);
+					}
+					token = strtok(NULL, " ");
 					i++;
-					j++;
 				}
-				listen_ip[j] = '\0';
 
-				i++;
-				j = 0;
-				while ((c = plaintext[i]) != '\0') {
-					listen_port_tmp[j] = c;
-					i++;
-					j++;
-				}
-				listen_port_tmp[j] = '\0';
+				log_info("[server] user '%s' waits to chat at '%s:%d'", user->username, listen_ip, listen_port);
 
-				int listen_port = (int) strtol(listen_port_tmp, NULL, 10);
-				log_info("[server] Client wants to listen for someone to (chat) with on IP: %s and PORT: %d", listen_ip, listen_port);
 				user->operation = LISTEN_BYTE;
-				user->ip_addr = listen_ip;
+				strcpy(user->ip_addr, listen_ip);
 				user->port = listen_port;
-				print_registered_user(user);
+
+				// send response back to client
+				prepare_status_code((char *) &plaintext, 200, "OK");
+				log_debug("[server] sending response to client: %s", plaintext);
+				if ((txb = send(connection_fd, &plaintext, strlen(plaintext) + 1, 0)) == -1) {
+					close(connection_fd);
+					close(server_fd);
+					log_with_errno("[server] sending message to client failed.");
+					exit(EXIT_FAILURE);
+				}
+				transmitted_bytes_increase_and_report(&txb, &t_txb, "server", 1);
+
+				close(connection_fd);
+
 				break;
 			default:
-				log_info("[server] Wrong initial byte %c --> should be %c or %c", plaintext[0], CONNECT_BYTE, LISTEN_BYTE);
-				log_info("[server] Closing connection");
+				log_error("[server] wrong initial byte '%c' --> should be one of [%c, %c]", plaintext[0], CONNECT_BYTE, LISTEN_BYTE);
+				log_error("[server] closing connection");
 				close(connection_fd);
 				break;
 		}
-		close(connection_fd);
+
+		//print_all_registered_users(users_list_head);
 	}
 
 	// cleanup
