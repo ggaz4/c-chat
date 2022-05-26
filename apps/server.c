@@ -88,11 +88,6 @@ int main(int argc, char const *argv[]) {
 
 	/* initialize */
 
-
-
-
-
-
 	/* get cmd options */
 	while ((opt = getopt(argc, (char *const *) argv, "p::a::h::")) != -1) {
 		switch (opt) {
@@ -155,7 +150,6 @@ int main(int argc, char const *argv[]) {
 
 	while (!sigint_received) {
 		//SOCK_NONBLOCK --> flag for accept4()
-
 		memset(&client_addr, 0, sizeof(struct sockaddr_in));
 		if ((connection_fd = accept4(server_fd, (struct sockaddr *) &client_addr, &client_addr_len, 0)) == -1) {
 			//make socket non-blocking to handle SIGINT only for accept()
@@ -190,7 +184,7 @@ int main(int argc, char const *argv[]) {
 			log_error("[server] wrong initial byte %c --> should be one of [%c, %c]", plaintext[0], REGISTER_BYTE, UNREGISTER_BYTE);
 			log_error("[server] closing connection");
 			close(connection_fd);
-			break;
+			continue;
 		}
 
 		char username[rxb];
@@ -287,7 +281,6 @@ int main(int argc, char const *argv[]) {
 			case CONNECT_BYTE:
 				i = 0;
 				char connect_with_username[256];
-
 				token = strtok(&plaintext[2], " ");
 				while (token) {
 					if (i == 0) {
@@ -316,6 +309,7 @@ int main(int argc, char const *argv[]) {
 						exit(EXIT_FAILURE);
 					}
 					transmitted_bytes_increase_and_report(&txb, &t_txb, "server", 1);
+					close(connection_fd);
 					break;
 				}
 
