@@ -6,7 +6,6 @@
 #include <netinet/in.h>
 
 
-
 typedef struct RegisteredUser {
 	//u_int32_t id;
 	char *username;

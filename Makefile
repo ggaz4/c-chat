@@ -1,16 +1,27 @@
-.phony: all configure-debug build-debug clean
+.phony: all configure build clean run-server run-client-listen run-client-connect
 
 ifndef VERBOSE
 MAKEFLAGS += --no-print-directory
 endif
 
-all: clean configure-debug build-debug
+all: clean configure build
 
 clean:
-	rm -rf build/*
+	rm -rf ./build
+	mkdir build
 
-configure-debug:
-	/usr/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/usr/bin/gcc -G "Unix Makefiles" -S . -B build/debug
+configure:
+	/usr/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/usr/bin/gcc -G "Unix Makefiles" -S . -B build/
 
-build-debug:
-	/usr/bin/cmake --build ./build/debug  --target all   -j 6
+build:
+	/usr/bin/cmake --build ./build/  --target all   -- -j 6
+
+run-server:
+	./build/apps/server
+
+run-client-listen:
+	./build/apps/client --mode listen --username user_that_listens
+
+run-client-connect:
+	./build/apps/client --mode connect --username user_that_connects --client-username user_that_listens
+

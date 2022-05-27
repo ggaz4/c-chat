@@ -1,10 +1,9 @@
-#include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-#include <errno.h>
+
 
 #include "structures.h"
+#include "logging.h"
 
 
 
@@ -100,8 +99,14 @@ void free_registered_users_list(RegisteredUser *head) {
 }
 
 void print_registered_user(RegisteredUser *user) {
-	printf("username: '%s', operation: '%c', IP: '%s', port: '%d'", user->username, user->operation, user->ip_addr, user->port);
-	fflush(stdout);
+	log_info(
+			"[server] username: '%s', operation: '%c', IP: '%s', port: '%d', connected_with: '%s'",
+			user->username,
+			user->operation,
+			user->ip_addr,
+			user->port,
+			user->connected_with
+	);
 }
 
 void print_all_registered_users(RegisteredUser *head) {
@@ -109,6 +114,7 @@ void print_all_registered_users(RegisteredUser *head) {
 		return;
 	}
 
+	log_info("[server] printing all registered users");
 	int users_count = 0;
 	RegisteredUser *p = head;
 	while (p) {
@@ -117,8 +123,7 @@ void print_all_registered_users(RegisteredUser *head) {
 		p = p->next;
 	}
 
-	printf("[server] Total registered users: %d", users_count);
-	fflush(stdout);
+	log_info("[server] total registered users: %d", users_count);
 }
 
 uint32_t uint32_random(void) {

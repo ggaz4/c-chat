@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -8,7 +7,7 @@
 
 
 int extract_status_code(char *plaintext) {
-	int status_code = -1;
+	int status_code;
 	char buffer[3];
 	memset(&buffer, 0, sizeof(buffer));
 	strncpy(buffer, plaintext, 3);

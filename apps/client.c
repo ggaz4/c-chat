@@ -25,7 +25,6 @@ int LOG_LEVEL = INFO_LEVEL; // must do this before any log_*() call
 
 #define SERVER_IP       "127.0.0.1"
 #define SERVER_PORT     29000
-#define BUFLEN          2048
 
 volatile sig_atomic_t sigint_received = 0;
 
@@ -58,18 +57,6 @@ enum mode map_str_to_mode(const char *name) {
 	return UNKNOWN;
 }
 
-const char *map_mode_to_str(enum mode mode) {
-	switch (mode) {
-		case LISTEN:
-			return "listen";
-		case CONNECT:
-			return "connect";
-		default:
-			return "unknown";
-	}
-
-}
-
 void usage(void) {
 	const char *message = "\tclient -i IP -p port -m message\n"
 	                      "\tclient -h\n";
@@ -85,6 +72,7 @@ void usage(void) {
 }
 
 int main(int argc, char *argv[]) {
+	//region variables declaration
 	/* socket variables */
 	int client_fd = -1;                             /* listen file descriptor   */
 	int connection_fd = -1;                         /* conn file descriptor     */
@@ -101,10 +89,12 @@ int main(int argc, char *argv[]) {
 	size_t t_txb = 0;                               /* total transmitted bytes  */
 	char plaintext[BUFLEN];                         /* plaintext buffer	        */
 	int plaintext_len = 0;                          /* plaintext size	        */
-	char init_byte;
+	char first_byte;
 	struct sockaddr_in chat_addr;
 	socklen_t chat_addr_len;
-
+	char server_addr_str[INET_ADDRSTRLEN + 1 + 6];
+	char client_addr_str[INET_ADDRSTRLEN + 1 + 6];
+	char chat_addr_str[INET_ADDRSTRLEN + 1 + 6];
 
 
 	/* general purpose variables */
@@ -114,14 +104,11 @@ int main(int argc, char *argv[]) {
 	int i;                                  /* temp int counter             */
 	int err;                                /* errors		                */
 
+	//endregion
 
-	/* initialize */
-
-
-
+	//region get command line flag options
 	/* command line variables */
 	int opt = 0;
-
 	/* getopt_long stores the option index here. */
 	int opt_index = 0;
 	int help_flag = 0;
@@ -199,15 +186,36 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-	/* socket init */
+	if (mode == CONNECT && client_username == NULL) {
+		log_error("[client] no client username provided. No one to chat with.");
+		usage();
+		exit(EXIT_FAILURE);
+	}
+
+	if (mode == LISTEN) {
+		if (listening_ip == NULL) {
+			log_info("[client] no listening IP specified. Resolving back to '127.0.0.1'");
+			listening_ip = "127.0.0.1";
+		}
+		if (listening_port == -1) {
+			log_info("[client] no listening port specified. Generating a random port from the valid dynamic range 49152-65535");
+			srand(time(0));
+			listening_port = rand() % ((65535 - 49152 + 1)) + 49152;
+		}
+	}
+
+
+	//endregion
+
+	// region initialize client (connect) socket
 	if ((client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
 		log_with_errno("[client] socket call failed");
 		exit(EXIT_FAILURE);
 	}
 
 	memset(&server_addr, 0, sizeof(struct sockaddr_in));
-	server_addr.sin_port = htons(server_port);
 	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(server_port);
 	inet_aton(server_ip, &server_addr.sin_addr);
 	server_addr_len = sizeof(server_addr);
 
@@ -216,12 +224,15 @@ int main(int argc, char *argv[]) {
 		close(client_fd);
 		exit(EXIT_FAILURE);
 	}
-	log_info("[client] connected to server at '%s%d'", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
+	//endregion
 
-	/* STAGE1: Show the initial text */
-	init_byte = REGISTER_BYTE;
+	memset(server_addr_str, '\0', sizeof(server_addr_str));
+	sprintf(server_addr_str, "%s:%d", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
+	log_info("[client] connected to server at '%s'", server_addr_str);
+
+	/* send initial message to the server */
+	first_byte = REGISTER_BYTE;
 	memset(&plaintext, 0, sizeof(plaintext));
-	plaintext_len = sprintf(plaintext, "%c%s", init_byte, username);
 	log_debug("[client] sending initial message to server '%s'", plaintext);
 	if ((txb = (size_t) send(client_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
 		log_with_errno("[client] socket sending initial message to server failed");
@@ -259,119 +270,140 @@ int main(int argc, char *argv[]) {
 	}
 
 	log_debug("[client] server responded with status code: %d", status_code);
-	log_info("[client] User '%s' successfully registered to the server", username);
+	log_info("[client] user '%s' successfully registered to the server", username);
 
-	// STAGE2: Send operation message to the server
-	switch (mode) {
-		case LISTEN:
-			//region LISTEN
-			init_byte = LISTEN_BYTE;
-			memset(&client_addr, 0, sizeof(struct sockaddr_in));
-			if (listening_ip == NULL) {
-				log_info("[client] No listening IP specified. Resolving back to '127.0.0.1'");
-				listening_ip = "127.0.0.1";
-			}
-			if (listening_port == -1) {
-				log_info("[client] No port specified. Generating a random port from the valid dynamic range 49152-65535");
-				srand(time(0));
-				listening_port = rand() % ((65535 - 49152 + 1)) + 49152;
-			}
+	/* Send operation message to the server */
+	if (mode == LISTEN) {
+		// region operation
+		first_byte = LISTEN_BYTE;
+		memset(&client_addr, 0, sizeof(struct sockaddr_in));
+		client_addr.sin_family = AF_INET;
+		client_addr.sin_port = htons(listening_port);
+		inet_aton(listening_ip, &client_addr.sin_addr);
+		client_addr_len = sizeof(client_addr);
+		sprintf(client_addr_str, "%s:%d", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-			client_addr.sin_family = AF_INET;
-			client_addr.sin_port = htons(listening_port);
-			inet_aton(listening_ip, &client_addr.sin_addr);
-			client_addr_len = sizeof(client_addr);
+		// send operation message to server
+		memset(&plaintext, 0, sizeof(plaintext));
+		sprintf((char *) &plaintext, "%c %s %d", first_byte, inet_ntoa(client_addr.sin_addr), listening_port);
+		log_debug("[client] sending operation message to server: %s", plaintext);
+		if ((txb = send(client_fd, &plaintext, strlen(plaintext) + 1, 0)) == -1) {
+			log_with_errno("[client] Socket sending operation message to server failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
 
-			log_debug("[client] listening mode at '%s:%d'", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+		// get operation message reply from server
+		memset(&plaintext, 0, sizeof(plaintext));
+		if ((rxb = (size_t) recv(client_fd, &plaintext, sizeof(plaintext), 0)) == -1) {
+			close(client_fd);
+			log_with_errno("[client] Socket error receiving operation message response");
+			exit(EXIT_FAILURE);
+		}
+		if (rxb == 0) {
+			log_error("[client] connection terminated before receiving operation message response from server");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
+		log_debug("[client] operation message response from server: '%s'", plaintext);
+		status_code = extract_status_code(plaintext);
 
-			memset(&plaintext, 0, sizeof(plaintext));
-			sprintf((char *) &plaintext, "%c %s %d", init_byte, inet_ntoa(client_addr.sin_addr), listening_port);
-			log_debug("[client] sending operation message to server: %s", plaintext);
-			if ((txb = send(client_fd, &plaintext, strlen(plaintext) + 1, 0)) == -1) {
-				log_with_errno("[client] Socket sending operation message to server failed");
+		if (status_code != 200) {
+			log_error("[client] %d: unknown error code", status_code);
+			log_error("[client] closing connection");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		log_debug("[client] server responded with status code: %d", status_code);
+
+		//close the connection with server
+		close(client_fd);
+
+		//endregion
+
+		// region initialize a server (listening) socket and wait for people to chat
+		if ((client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
+			log_with_errno("[client] socket call failed");
+			exit(EXIT_FAILURE);
+		}
+
+		//make socket non blocking to handle SIGINT
+		fcntl(client_fd, F_SETFL, O_NONBLOCK);
+
+		// set socket options like "ERROR on binding: Address already in use"
+		if ((setsockopt(client_fd, SOL_SOCKET, SO_REUSEADDR, (char *) &optval, sizeof(optval))) < 0) {
+			log_with_errno("[client] socket setsockopt failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+
+		//bind the socket
+		if (bind(client_fd, (struct sockaddr *) &client_addr, sizeof(client_addr)) == -1) {
+			log_with_errno("[client] socket bind failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+
+		//listen for connections on socket
+		if (listen(client_fd, 5)) {
+			log_with_errno("[client] socket listen failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+
+		//endregion
+
+		log_info("[client] Awaiting for client connections on '%s:%d'", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+		signal(SIGINT, sigint_handler);
+
+		while (!sigint_received) {
+			memset(&chat_addr, 0, sizeof(struct sockaddr_in));
+
+			if ((connection_fd = accept4(client_fd, (struct sockaddr *) &chat_addr, &chat_addr_len, 0)) == -1) {
+				if (errno == EAGAIN | errno == EWOULDBLOCK) { continue; }
+				log_with_errno("[client] socket accept failed");
 				close(client_fd);
 				exit(EXIT_FAILURE);
 			}
-			transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
 
-			memset(&plaintext, 0, sizeof(plaintext));
-			if ((rxb = (size_t) recv(client_fd, &plaintext, sizeof(plaintext), 0)) == -1) {
-				close(client_fd);
-				log_with_errno("[client] Socket error receiving operation message response");
-				exit(EXIT_FAILURE);
+			// disable nonblock flag so, it won't crash the program later
+			fcntl(client_fd, F_SETFL, ~O_NONBLOCK);
+
+
+			log_info("[client] a user connected for chat from '%s:%d'", inet_ntoa(chat_addr.sin_addr), ntohs(chat_addr.sin_port));
+
+			// before chat receive the username to make it more beautiful
+			memset(plaintext, 0, sizeof(plaintext));
+			if ((rxb = (size_t) recv(connection_fd, plaintext, sizeof(plaintext), 0)) == -1) {
+				log_with_errno("[client] socket error receiving message");
+				close(connection_fd);
+				break;
 			}
 			if (rxb == 0) {
-				log_error("[client] connection terminated before receiving operation message response from server");
-				close(client_fd);
-				exit(EXIT_FAILURE);
+				log_info("[client] connection terminated");
+				close(connection_fd);
+				break;
 			}
 			received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
 
-			log_debug("[client] operation message response from server: '%s'", plaintext);
+			client_username = (char *) malloc(rxb + 1 * sizeof(char));
+			strcpy(client_username, plaintext);
+			log_debug("[client] username: '%s'", client_username);
 
-			status_code = extract_status_code(plaintext);
-			log_debug("[client] server responded with status code: %d", status_code);
+			while (1) {
+				printf("[%s] ", client_username);
+				fflush(stdout);
 
-			//close the connection with server
-			close(client_fd);
-
-			// and now we wait for connections (like a second server)
-			if ((client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
-				log_with_errno("[client] socket call failed");
-				exit(EXIT_FAILURE);
-			}
-
-			//make socket non blocking to handle SIGINT
-			fcntl(client_fd, F_SETFL, O_NONBLOCK);
-
-			// set socket options like "ERROR on binding: Address already in use"
-			if ((setsockopt(client_fd, SOL_SOCKET, SO_REUSEADDR, (char *) &optval, sizeof(optval))) < 0) {
-				log_with_errno("[client] socket setsockopt failed");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-
-			//bind the socket
-			if (bind(client_fd, (struct sockaddr *) &client_addr, sizeof(client_addr)) == -1) {
-				log_with_errno("[client] socket bind failed");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-
-			//listen for connections on socket
-			if (listen(client_fd, 5)) {
-				log_with_errno("[client] socket listen failed");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-
-			log_info("[client] Awaiting for client connections on '%s:%d'", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-
-			signal(SIGINT, sigint_handler);
-
-			while (!sigint_received) {
-				memset(&chat_addr, 0, sizeof(struct sockaddr_in));
-
-				if ((connection_fd = accept4(client_fd, (struct sockaddr *) &chat_addr, &chat_addr_len, 0)) == -1) {
-					//make socket non-blocking to handle SIGINT only for accept()
-					if (errno == EAGAIN | errno == EWOULDBLOCK) { continue; }
-					log_with_errno("[client] socket accept failed");
-					close(client_fd);
-					exit(EXIT_FAILURE);
-				}
-
-				// disable nonblock flag so, it won't crash the program later
-				fcntl(client_fd, F_SETFL, ~O_NONBLOCK);
-
-
-				log_info("[client] a user connected for chat from '%s:%d'", inet_ntoa(chat_addr.sin_addr), ntohs(chat_addr.sin_port));
-
-				// before chat receive the username to make it more beautiful
 				memset(plaintext, 0, sizeof(plaintext));
 				if ((rxb = (size_t) recv(connection_fd, plaintext, sizeof(plaintext), 0)) == -1) {
 					log_with_errno("[client] socket error receiving message");
 					close(connection_fd);
-					break;
+					close(client_fd);
+					free(client_username);
+					exit(EXIT_FAILURE);
 				}
 				if (rxb == 0) {
 					log_info("[client] connection terminated");
@@ -380,237 +412,184 @@ int main(int argc, char *argv[]) {
 				}
 				received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
 
-				client_username = (char *) malloc(rxb + 1 * sizeof(char));
-				strcpy(client_username, plaintext);
-				log_debug("[client] username: '%s'", client_username);
-
-				while (1) {
-
-					memset(plaintext, 0, sizeof(plaintext));
-					if ((rxb = (size_t) recv(connection_fd, plaintext, sizeof(plaintext), 0)) == -1) {
-						log_with_errno("[client] socket error receiving message");
-						close(connection_fd);
-						close(client_fd);
-						exit(EXIT_FAILURE);
-					}
-					if (rxb == 0) {
-						log_info("[client] connection terminated");
-						close(connection_fd);
-						break;
-					}
-					received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
-
-					printf("[%s] %s\n", client_username, plaintext);
-					fflush(stdout);
-
-					// send message back as is
-					log_debug("[client] sending message back to the user: '%s'", plaintext);
-					if ((txb = send(connection_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
-						log_with_errno("[client] socket error sending message back to the user '%s'", client_username);
-						close(connection_fd);
-						exit(EXIT_FAILURE);
-					}
-					transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
-
-					printf("[%s] %s\n", username, plaintext);
-					fflush(stdout);
-
-				}
-
-				free(client_username);
-
-			}
-
-			// reconnect to the server and tell him that you are not listening anymore for connections
-
-			break;
-			//endregion
-		case CONNECT:
-			//region CONNECT
-			init_byte = CONNECT_BYTE;
-
-			if (client_username == NULL) {
-				log_error("[client] no client username provided. No one to chat with.");
-				log_error("[client] closing connection");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-
-			log_debug("[client] connection mode with user '%s'", client_username);
-
-			// send operation message to server
-			memset(&plaintext, 0, sizeof(plaintext));
-			sprintf((char *) &plaintext, "%c %s", init_byte, client_username);
-			log_debug("[client] sending operation message to server: %s", plaintext);
-			if ((txb = send(client_fd, &plaintext, strlen(plaintext) + 1, 0)) == -1) {
-				log_with_errno("[client] socket sending operation message to server failed");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-			transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
-
-			// receive reply from server
-			memset(&plaintext, 0, sizeof(plaintext));
-			if ((rxb = (size_t) recv(client_fd, plaintext, sizeof(plaintext), 0)) == -1) {
-				log_with_errno("[client] socket error receiving operation message response from server");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-			if (rxb == 0) {
-				log_error("[client] connection terminated before receiving operation message response from server");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-			received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
-
-			log_debug("[client] operation message response from server: '%s'", plaintext);
-
-			status_code = extract_status_code(plaintext);
-			if (status_code != 200) {
-				if (status_code == 409) {
-					log_error("[client] 404 Not Found: user '%s' does not exist in the server", client_username);
-				} else {
-					log_error("[client] %d: unknown error code", status_code);
-				}
-				log_error("[client] closing connection");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-
-			log_debug("[client] server responded with status code: %d", status_code);
-
-			// receive 2nd reply from server
-//			memset(&plaintext, 0, sizeof(plaintext));
-//			if ((rxb = (size_t) recv(client_fd, plaintext, sizeof(plaintext), 0 )) == -1) {
-//				log_with_errno("[client] socket error receiving second operation message response");
-//				close(client_fd);
-//				exit(EXIT_FAILURE);
-//			}
-//			if (rxb == 0) {
-//				log_error("[client] connection terminated before receiving second operation message response from server");
-//				close(client_fd);
-//				exit(EXIT_FAILURE);
-//			}
-//			received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
-//
-//			log_debug("[client] second operation message response from server: '%s'", plaintext);
-
-			//tokenize the reply and populate client_addr
-			memset(&client_addr, 0, sizeof(struct sockaddr_in));
-			client_addr.sin_family = AF_INET;
-			i = 0;
-			char *token = strtok(&plaintext[6], " ");
-			int tmp_port;
-			while (token) {
-				if (i == 0) {
-					inet_aton(token, &client_addr.sin_addr);
-				} else if (i == 1) {
-					tmp_port = (int) strtol(token, NULL, 10);
-					client_addr.sin_port = htons(tmp_port);
-				}
-				token = strtok(NULL, " ");
-				i++;
-			}
-			client_addr_len = sizeof(client_addr);
-
-
-			log_info(
-					"[client] User '%s' found. Attempting connection at '%s:%d'",
-					client_username,
-					inet_ntoa(client_addr.sin_addr),
-					ntohs(client_addr.sin_port));
-
-			// close connection with the server
-			close(client_fd);
-
-			// connect to the user for chat
-			if ((client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
-				log_with_errno("[client] socket call failed");
-				exit(EXIT_FAILURE);
-			}
-
-			if ((connect(client_fd, (struct sockaddr *) &client_addr, client_addr_len)) == -1) {
-				log_with_errno("[client] socket connect failed");
-				close(client_fd);
-				exit(EXIT_FAILURE);
-			}
-			log_info("[client] connected with user '%s' for chat at '%s:%d'", client_username, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-
-			memset(plaintext, 0, sizeof(plaintext));
-			sprintf(plaintext, "%s", username);
-			log_debug("[client] sending username '%s' to '%s' for recognition", username, client_username);
-			if ((txb = (size_t) send(client_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
-				close(client_fd);
-				log_with_errno("[client] socket error sending username to '%s'", client_username);
-				exit(EXIT_FAILURE);
-			}
-			transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
-
-			while (1) {
-				printf("[%s] ", username);
+				printf("%s\n", plaintext);
 				fflush(stdout);
-				memset(plaintext, 0, sizeof(plaintext));
-				fgets(plaintext, sizeof(plaintext), stdin);
 
-				// strip newline from message
-				plaintext[strcspn(plaintext, "\r\n")] = 0;
-
-				if (plaintext[1] == '\0' && (plaintext[0] == 'q' || plaintext[0] == 'Q')) {
-					log_info("[client] terminating chat connection with %s", client_username);
-					close(client_fd);
-					break;
-				}
-
-				log_debug("[client] sending message '%s' to user %s", plaintext, client_username);
-				if ((txb = (size_t) send(client_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
-					log_with_errno("[client] socket error sending message to user '%s'", client_username);
-					close(client_fd);
+				// send message back as is
+				log_debug("[client] sending message back to the user: '%s'", plaintext);
+				if ((txb = send(connection_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+					log_with_errno("[client] socket error sending message back to the user '%s'", client_username);
+					close(connection_fd);
+					free(client_username);
 					exit(EXIT_FAILURE);
 				}
 				transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
 
-				memset(plaintext, 0, sizeof(plaintext));
-				if ((rxb = (size_t) recv(client_fd, plaintext, sizeof(plaintext), 0)) == -1) {
-					log_with_errno("[client] socket error receiving message from user '%s'", client_username);
-					close(client_fd);
-					exit(EXIT_FAILURE);
-				}
-				if (rxb == 0) {
-					log_error("[client] connection terminated unexpectedly");
-					close(client_fd);
-					exit(EXIT_FAILURE);
-				}
-				received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
-
-				printf("[%s] %s\n", client_username, plaintext);
+				printf("[%s] %s\n", username, plaintext);
 				fflush(stdout);
 			}
+			free(client_username);
+		}
 
-			// unregister from the server
-			if ((client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
-				log_with_errno("[client] socket call failed");
-				exit(EXIT_FAILURE);
+		// region reconnect to the server and unregister
+		if ((client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
+			log_with_errno("[client] socket call failed");
+			exit(EXIT_FAILURE);
+		}
+
+		// server_addr structure is already populated from the previous connection call
+		if ((connect(client_fd, (struct sockaddr *) &server_addr, server_addr_len)) == -1) {
+			log_with_errno("[client] socket connect failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		log_info("[client] connected to server at '%s:%d'", server_addr_str);
+
+		first_byte = UNREGISTER_BYTE;
+		memset(&plaintext, 0, sizeof(plaintext));
+		plaintext_len = sprintf(plaintext, "%c%s", first_byte, username);
+		log_debug("[client] sending UNREGISTER message to server '%s'", plaintext);
+		if ((txb = (size_t) send(client_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+			log_with_errno("[client] socket sending UNREGISTER message to server failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
+
+		memset(plaintext, 0, sizeof(plaintext));
+		if ((rxb = (size_t) recv(client_fd, plaintext, sizeof(plaintext), 0)) == -1) {
+			log_with_errno("[client] socket error receiving unregister message response from server");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		if (rxb == 0) {
+			log_error("[client] connection terminated unexpectedly");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
+
+		//close connection with the server
+		close(client_fd);
+		//endregion
+
+	}
+
+	if (mode == CONNECT) {
+		// region operation
+		first_byte = CONNECT_BYTE;
+
+		// send operation message to server
+		memset(&plaintext, 0, sizeof(plaintext));
+		sprintf((char *) &plaintext, "%c %s", first_byte, client_username);
+		log_debug("[client] sending operation message to server: %s", plaintext);
+		if ((txb = send(client_fd, &plaintext, strlen(plaintext) + 1, 0)) == -1) {
+			log_with_errno("[client] socket sending operation message to server failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
+
+		// receive operation message reply from the server
+		memset(&plaintext, 0, sizeof(plaintext));
+		if ((rxb = (size_t) recv(client_fd, plaintext, sizeof(plaintext), 0)) == -1) {
+			log_with_errno("[client] socket error receiving operation message response from server");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		if (rxb == 0) {
+			log_error("[client] connection terminated before receiving operation message response from server");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
+
+		log_debug("[client] operation message response from server: '%s'", plaintext);
+
+		status_code = extract_status_code(plaintext);
+		if (status_code != 200) {
+			if (status_code == 409) {
+				log_error("[client] 404 Not Found: user '%s' does not exist in the server", client_username);
+			} else {
+				log_error("[client] %d: unknown error code", status_code);
 			}
+			log_error("[client] closing connection");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
 
-			memset(&server_addr, 0, sizeof(struct sockaddr_in));
-			server_addr.sin_port = htons(server_port);
-			server_addr.sin_family = AF_INET;
-			inet_aton(server_ip, &server_addr.sin_addr);
-			server_addr_len = sizeof(server_addr);
+		log_debug("[client] server responded with status code: %d", status_code);
 
-			if ((connect(client_fd, (struct sockaddr *) &server_addr, server_addr_len)) == -1) {
-				log_with_errno("[client] socket connect failed");
+		//tokenize the reply and populate client_addr
+		memset(&client_addr, 0, sizeof(struct sockaddr_in));
+		client_addr.sin_family = AF_INET;
+		i = 0;
+		char *token = strtok(&plaintext[6], " ");
+		int tmp_port;
+		while (token) {
+			if (i == 0) {
+				inet_aton(token, &client_addr.sin_addr);
+			} else if (i == 1) {
+				tmp_port = (int) strtol(token, NULL, 10);
+				client_addr.sin_port = htons(tmp_port);
+			}
+			token = strtok(NULL, " ");
+			i++;
+		}
+		client_addr_len = sizeof(client_addr);
+
+
+		log_info(
+				"[client] User '%s' found. Attempting connection at '%s:%d'", client_username, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+		// close connection with the server
+		close(client_fd);
+
+		//endregion
+
+		// connect to the listening user for chat
+		if ((client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
+			log_with_errno("[client] socket call failed");
+			exit(EXIT_FAILURE);
+		}
+
+		if ((connect(client_fd, (struct sockaddr *) &client_addr, client_addr_len)) == -1) {
+			log_with_errno("[client] socket connect failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+
+		sprintf(client_addr_str, "%s:%d", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+		log_info("[client] connected with user '%s' for chat at '%s'", client_addr_str);
+
+		memset(plaintext, 0, sizeof(plaintext));
+		sprintf(plaintext, "%s", username);
+		log_debug("[client] sending username '%s' to '%s' for recognition", username, client_username);
+		if ((txb = (size_t) send(client_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+			close(client_fd);
+			log_with_errno("[client] socket error sending username to '%s'", client_username);
+			exit(EXIT_FAILURE);
+		}
+		transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
+
+		while (1) {
+			printf("[%s] ", username);
+			fflush(stdout);
+			memset(plaintext, 0, sizeof(plaintext));
+			fgets(plaintext, sizeof(plaintext), stdin);
+
+			// strip newline from message
+			plaintext[strcspn(plaintext, "\r\n")] = 0;
+
+			if (plaintext[1] == '\0' && (plaintext[0] == 'q' || plaintext[0] == 'Q')) {
+				log_info("[client] terminating chat connection with %s", client_username);
 				close(client_fd);
-				exit(EXIT_FAILURE);
+				break;
 			}
-			log_info("[client] connected to server at '%s:%d'", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
 
-			init_byte = UNREGISTER_BYTE;
-			memset(&plaintext, 0, sizeof(plaintext));
-			plaintext_len = sprintf(plaintext, "%c%s", init_byte, username);
-			log_debug("[client] sending UNREGISTER message to server '%s'", plaintext);
+			log_debug("[client] sending message '%s' to user %s", plaintext, client_username);
 			if ((txb = (size_t) send(client_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
-				log_with_errno("[client] socket sending UNREGISTER message to server failed");
+				log_with_errno("[client] socket error sending message to user '%s'", client_username);
 				close(client_fd);
 				exit(EXIT_FAILURE);
 			}
@@ -618,28 +597,68 @@ int main(int argc, char *argv[]) {
 
 			memset(plaintext, 0, sizeof(plaintext));
 			if ((rxb = (size_t) recv(client_fd, plaintext, sizeof(plaintext), 0)) == -1) {
-				log_with_errno("[client] socket error receiving unregister message response from server");
+				log_with_errno("[client] socket error receiving message from user '%s'", client_username);
 				close(client_fd);
 				exit(EXIT_FAILURE);
 			}
 			if (rxb == 0) {
 				log_error("[client] connection terminated unexpectedly");
 				close(client_fd);
-				break;
+				exit(EXIT_FAILURE);
 			}
 			received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
 
-			close(client_fd);
+			printf("[%s] %s\n", client_username, plaintext);
+			fflush(stdout);
+		}
 
-			break;
-			//endregion
-		default:
-			log_info("[client] wrong operation %d", map_mode_to_str(mode));
+		// region unregister from the server
+		if ((client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP)) == -1) {
+			log_with_errno("[client] socket call failed");
+			exit(EXIT_FAILURE);
+		}
+
+
+		// server_addr structure is already populated from the previous connection call
+		if ((connect(client_fd, (struct sockaddr *) &server_addr, server_addr_len)) == -1) {
+			log_with_errno("[client] socket connect failed");
 			close(client_fd);
-			break;
+			exit(EXIT_FAILURE);
+		}
+		log_info("[client] connected to server at '%s:%d'", server_addr_str);
+
+		// send operation message to server
+		first_byte = UNREGISTER_BYTE;
+		memset(&plaintext, 0, sizeof(plaintext));
+		plaintext_len = sprintf(plaintext, "%c%s", first_byte, username);
+		log_debug("[client] sending UNREGISTER message to server '%s'", plaintext);
+		if ((txb = (size_t) send(client_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
+			log_with_errno("[client] socket sending UNREGISTER message to server failed");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		transmitted_bytes_increase_and_report(&txb, &t_txb, "client", 1);
+
+		// receive operation message reply from the server
+		memset(plaintext, 0, sizeof(plaintext));
+		if ((rxb = (size_t) recv(client_fd, plaintext, sizeof(plaintext), 0)) == -1) {
+			log_with_errno("[client] socket error receiving unregister message response from server");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		if (rxb == 0) {
+			log_error("[client] connection terminated unexpectedly");
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+		received_bytes_increase_and_report(&rxb, &t_rxb, "client", 1);
+
+		// close connection with the server
+		close(client_fd);
+
+		//endregion
 	}
 
-	return 0;
+	exit(EXIT_SUCCESS);
 }
 
-/* EOF */

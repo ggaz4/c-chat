@@ -1,10 +1,14 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#define BUFLEN          2048
+
 #define REGISTER_BYTE   'R'
 #define UNREGISTER_BYTE 'U'
 #define CONNECT_BYTE    'C'
 #define LISTEN_BYTE     'L'
+
+
 
 int extract_status_code(char *plaintext);
 
