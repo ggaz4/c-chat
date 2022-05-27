@@ -7,8 +7,8 @@ endif
 all: clean configure build
 
 clean:
-	rm -rf ./build
-	mkdir build
+	rm -rf ./build/*
+
 
 configure:
 	/usr/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/usr/bin/gcc -G "Unix Makefiles" -S . -B build/
