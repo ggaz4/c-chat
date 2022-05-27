@@ -69,7 +69,7 @@ root directory (c-chat) τρέχουμε τις εντολές (με αυτή τ
    ./build/apps/client --mode listen --username <the_user_name> --client-username <the_user_name_that_already_listens>
    ```
     Αντικαθιστώντας τη μεταβλητή `<the_user_name>` όπως στο **βήμα (2.)** και 
-    τη μεταβλητή <the_user_name_that_already_listens> με την το όνομα του χρήστη
+    τη μεταβλητή `<the_user_name_that_already_listens>` με την το όνομα του χρήστη
     που θέλουμε να συνδεθούμε (και ακούει ήδη για συνδέσεις --> **βήμα (2.)**
     
     Και εδώ για ευκολία έχει δημιουργηθεί ένας makefile κανόνας
