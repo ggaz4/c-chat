@@ -16,7 +16,7 @@ make
 ```bash
 make clean
 make configure
-make build
+make build-debug
 ```
 
 ### Build CMake χωρίς Makefile
