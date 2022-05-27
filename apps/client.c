@@ -233,6 +233,7 @@ int main(int argc, char *argv[]) {
 	/* send initial message to the server */
 	first_byte = REGISTER_BYTE;
 	memset(&plaintext, 0, sizeof(plaintext));
+	sprintf(plaintext, "%c%s", first_byte, username);
 	log_debug("[client] sending initial message to server '%s'", plaintext);
 	if ((txb = (size_t) send(client_fd, plaintext, strlen(plaintext) + 1, 0)) == -1) {
 		log_with_errno("[client] socket sending initial message to server failed");

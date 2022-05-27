@@ -226,7 +226,7 @@ int main(int argc, char const *argv[]) {
 			} else {
 				// send response back to the client that user was deleted successfully
 				delete_registered_user(&users_list_head, username);
-				log_debug("[server] successfully deleted user '%s' from the list", username);
+				log_info("[server] successfully deleted user '%s' from the list", username);
 				prepare_status_code((char *) &plaintext, 200, "OK");
 			}
 

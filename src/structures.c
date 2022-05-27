@@ -111,6 +111,7 @@ void print_registered_user(RegisteredUser *user) {
 
 void print_all_registered_users(RegisteredUser *head) {
 	if (head == NULL) {
+		log_info("[server] No registered users in the list at the moment");
 		return;
 	}
 
