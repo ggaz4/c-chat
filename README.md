@@ -1,4 +1,4 @@
-# C Chat - Εργασία Παλιών
+# C Chat - Γαζής Γιώργος - Βασιλείου Κώστας
 
 Το project χρησιμοποιεί το tool cmake για να κάνει compile
 όλα τα απαραίτητα executables και libraries.
