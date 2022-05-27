@@ -1,6 +1,8 @@
 #ifndef C_CHAT_LOGGING_H
 #define C_CHAT_LOGGING_H
 
+#include <stdarg.h>
+
 #define DEBUG_LEVEL   2
 #define INFO_LEVEL    4
 #define ERROR_LEVEL   8
