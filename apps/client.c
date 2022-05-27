@@ -509,7 +509,7 @@ int main(int argc, char *argv[]) {
 
 		status_code = extract_status_code(plaintext);
 		if (status_code != 200) {
-			if (status_code == 409) {
+			if (status_code == 404) {
 				log_error("[client] 404 Not Found: user '%s' does not exist in the server", client_username);
 			} else {
 				log_error("[client] %d: unknown error code", status_code);
